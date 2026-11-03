@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -15,6 +16,8 @@ from fastapi.responses import FileResponse
 from PIL import Image, ImageEnhance, ImageOps, UnidentifiedImageError
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("pixora.telegram")
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = os.getenv("DATABASE_PATH", str(ROOT / "pixora.db"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "12")) * 1024 * 1024
@@ -211,17 +214,20 @@ async def telegram_webhook(
     update: dict,
     x_telegram_bot_api_secret_token: str = Header(default=""),
 ):
-    """Minimal /start handler for Telegram Bot API webhook."""
     expected_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
     token = os.getenv("BOT_TOKEN", "")
     webapp_url = os.getenv("WEBAPP_URL", "")
     if not expected_secret or not hmac.compare_digest(x_telegram_bot_api_secret_token, expected_secret):
+        logger.warning("Webhook rejected: secret missing or invalid")
         raise HTTPException(403, "Forbidden")
-    if not token or not webapp_url:
-        raise HTTPException(503, "Bot is not configured")
     message = update.get("message") or {}
     chat_id = (message.get("chat") or {}).get("id")
-    if not chat_id or not (message.get("text") or "").strip().startswith("/start"):
+    text = (message.get("text") or "").strip()
+    logger.info("Telegram update received: message=%s chat_id_present=%s", bool(message), bool(chat_id))
+    if not token or not webapp_url:
+        logger.error("Cannot reply: BOT_TOKEN_present=%s WEBAPP_URL_present=%s", bool(token), bool(webapp_url))
+        raise HTTPException(503, "Bot is not configured")
+    if not chat_id or not text.startswith("/start"):
         return {"ok": True}
     import httpx
     payload = {
@@ -234,26 +240,36 @@ async def telegram_webhook(
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
     if response.status_code >= 400:
+        logger.error("Telegram sendMessage failed: status=%s body=%s", response.status_code, response.text[:1000])
         raise HTTPException(502, "Telegram API request failed")
+    logger.info("Telegram /start reply sent successfully")
     return {"ok": True}
 
 
 @app.on_event("startup")
 async def register_telegram_webhook():
-    """Register this app's webhook with Telegram when credentials are configured."""
     token = os.getenv("BOT_TOKEN", "")
     webapp_url = os.getenv("WEBAPP_URL", "")
     webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    logger.info(
+        "Telegram webhook setup: BOT_TOKEN_present=%s WEBAPP_URL_present=%s WEBHOOK_SECRET_present=%s",
+        bool(token), bool(webapp_url), bool(webhook_secret),
+    )
     if not token or not webapp_url or not webhook_secret:
+        logger.error("Telegram webhook not registered: one or more required environment variables are missing")
         return
     import httpx
-    async with httpx.AsyncClient(timeout=15) as client:
-        response = await client.post(
-            f"https://api.telegram.org/bot{token}/setWebhook",
-            json={
-                "url": f"{webapp_url.rstrip('/')}/api/telegram/webhook",
-                "secret_token": webhook_secret,
-                "allowed_updates": ["message"],
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{token}/setWebhook",
+                json={
+                    "url": f"{webapp_url.rstrip('/')}/api/telegram/webhook",
+                    "secret_token": webhook_secret,
+                    "allowed_updates": ["message"],
+                },
+            )
+        logger.info("Telegram setWebhook response: status=%s body=%s", response.status_code, response.text[:1000])
         response.raise_for_status()
+    except Exception:
+        logger.exception("Telegram webhook registration failed")
