@@ -40,7 +40,7 @@ uvicorn app.main:app --reload
 
 Открой `http://127.0.0.1:8000` для проверки интерфейса. Для авторизованных API-запросов Mini App должен быть открыт через Telegram и иметь корректно настроенный бот и HTTPS URL.
 
-## Переменные окружения
+## Telegram-бот (webhook)\n\nДобавлен минимальный обработчик `/start`, который отправляет кнопку открытия Mini App. После размещения на HTTPS нужно задать `BOT_TOKEN`, `WEBAPP_URL` и случайный `TELEGRAM_WEBHOOK_SECRET`, затем зарегистрировать webhook через Telegram Bot API по адресу `https://ВАШ-ДОМЕН/api/telegram/webhook`, передав тот же секрет как `secret_token`. Webhook пока не зарегистрирован: для этого нужны токен бота и публичный HTTPS-домен.\n\n## Переменные окружения
 
 - `BOT_TOKEN` — токен бота; не добавлять в GitHub.
 - `WEBAPP_URL` — HTTPS-адрес Mini App после размещения.
