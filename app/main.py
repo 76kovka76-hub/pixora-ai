@@ -204,3 +204,35 @@ def plans():
         ],
         "payment_status": "not_configured",
     }
+
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(
+    update: dict,
+    x_telegram_bot_api_secret_token: str = Header(default=""),
+):
+    """Minimal /start handler for Telegram Bot API webhook."""
+    expected_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    token = os.getenv("BOT_TOKEN", "")
+    webapp_url = os.getenv("WEBAPP_URL", "")
+    if not expected_secret or not hmac.compare_digest(x_telegram_bot_api_secret_token, expected_secret):
+        raise HTTPException(403, "Forbidden")
+    if not token or not webapp_url:
+        raise HTTPException(503, "Bot is not configured")
+    message = update.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    if not chat_id or not (message.get("text") or "").strip().startswith("/start"):
+        return {"ok": True}
+    import httpx
+    payload = {
+        "chat_id": chat_id,
+        "text": "Добро пожаловать в PIXORA AI! Нажми кнопку ниже, чтобы открыть фотостудию.",
+        "reply_markup": {"inline_keyboard": [[{
+            "text": "Открыть PIXORA AI", "web_app": {"url": webapp_url}
+        }]]}
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
+    if response.status_code >= 400:
+        raise HTTPException(502, "Telegram API request failed")
+    return {"ok": True}
