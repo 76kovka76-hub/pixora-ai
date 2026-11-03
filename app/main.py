@@ -236,3 +236,24 @@ async def telegram_webhook(
     if response.status_code >= 400:
         raise HTTPException(502, "Telegram API request failed")
     return {"ok": True}
+
+
+@app.on_event("startup")
+async def register_telegram_webhook():
+    """Register this app's webhook with Telegram when credentials are configured."""
+    token = os.getenv("BOT_TOKEN", "")
+    webapp_url = os.getenv("WEBAPP_URL", "")
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if not token or not webapp_url or not webhook_secret:
+        return
+    import httpx
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={
+                "url": f"{webapp_url.rstrip('/')}/api/telegram/webhook",
+                "secret_token": webhook_secret,
+                "allowed_updates": ["message"],
+            },
+        )
+        response.raise_for_status()
